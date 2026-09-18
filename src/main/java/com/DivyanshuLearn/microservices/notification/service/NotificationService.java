@@ -15,36 +15,47 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class NotificationService {
 
-   private final JavaMailSender javaMailSender;
+    private static final String ORDER_PLACED_TOPIC = "order-placed";
+    private static final String FROM_ADDRESS = "springshop@email.com";
 
-    @KafkaListener(topics = "order-placed")
-    public  void listen(OrderPlacedEvent orderPlacedEvent){
-        log.info("Got Message from order-placed topic {}", orderPlacedEvent);
-        //send email to the customer
-        MimeMessagePreparator messagePreparator = mimeMessage -> {
-            MimeMessageHelper messageHelper = new MimeMessageHelper(mimeMessage);
-            messageHelper.setFrom("springshop@email.com");
-            messageHelper.setTo(orderPlacedEvent.getEmail().toString());
-            messageHelper.setSubject(String.format("Your Order with OrderNumber %s is placed successfully", orderPlacedEvent.getOrderNumber()));
-            messageHelper.setText(String.format("""
-                            Hi %s,%s
+    private final JavaMailSender javaMailSender;
 
-                            Your order with order number %s is now placed successfully.
+    @KafkaListener(topics = ORDER_PLACED_TOPIC)
+    public void listen(OrderPlacedEvent orderPlacedEvent) {
+        log.info("Received OrderPlacedEvent from topic '{}': {}", ORDER_PLACED_TOPIC, orderPlacedEvent);
 
-                            Best Regards
-                            Spring Shop
-                            """,
-                    orderPlacedEvent.getFirstName().toString(),
-                    orderPlacedEvent.getLastName().toString(),
-                    orderPlacedEvent.getOrderNumber()));
-        };
+        MimeMessagePreparator messagePreparator = buildOrderConfirmationEmail(orderPlacedEvent);
+
         try {
             javaMailSender.send(messagePreparator);
-            log.info("Order Notifcation email sent!!");
-        } catch (MailException e) {
-            log.error("Exception occurred when sending mail", e);
-            throw new RuntimeException("Exception occurred when sending mail to springshop@email.com", e);
+            log.info("Order confirmation email sent for order {}",
+                    orderPlacedEvent.getOrderNumber());
+        } catch (MailException ex) {
+            log.error("Failed to send email for order {}: {}",
+                    orderPlacedEvent.getOrderNumber(), ex.getMessage(), ex);
+            // Do not rethrow — avoids infinite retry loops on permanent mail failures.
+            // In production, push to a dead-letter topic or alert channel instead.
         }
+    }
 
+    private MimeMessagePreparator buildOrderConfirmationEmail(OrderPlacedEvent event) {
+        return mimeMessage -> {
+            MimeMessageHelper helper = new MimeMessageHelper(mimeMessage);
+            helper.setFrom(FROM_ADDRESS);
+            helper.setTo(event.getEmail().toString());
+            helper.setSubject(String.format(
+                    "Your Order %s is placed successfully", event.getOrderNumber()));
+            helper.setText(String.format("""
+                    Hi %s %s,
+
+                    Your order with order number %s has been placed successfully.
+
+                    Best Regards,
+                    Spring Shop
+                    """,
+                    event.getFirstName().toString(),
+                    event.getLastName().toString(),
+                    event.getOrderNumber()));
+        };
     }
 }
